@@ -8,28 +8,29 @@ import android.provider.Settings
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.unit.dp
-
-import androidx.compose.material3.Button
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -37,7 +38,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 import com.google.android.gms.maps.CameraUpdateFactory
-import com.google.android.gms.maps.model.CameraPosition
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapUiSettings
@@ -45,41 +45,57 @@ import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.rememberCameraPositionState
 
-import androidx.compose.foundation.layout.padding
-import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
 @Composable
 fun MapScreen(
     viewModel: MapViewModel = viewModel()
 ) {
 
+    // Get the current Android Context.
     val context = LocalContext.current
+
+    // Coroutine scope used for background operations,
+    // such as converting GPS coordinates into an address.
     val scope = rememberCoroutineScope()
+
+    // Get the lifecycle owner of the current Compose screen.
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    // Observe the latest location provided by the ViewModel.
     val userLocation by
     viewModel.userLocation.collectAsState()
 
+    // Controls whether the Location disabled dialog is visible.
     var showLocationDialog by
     remember { mutableStateOf(false) }
 
+    // Controls whether the Internet unavailable dialog is visible.
     var showInternetDialog by
     remember { mutableStateOf(false) }
 
 
     /*
-     * Check everything and start location updates
+     * Check all required device conditions:
+     *
+     * 1. Location permission
+     * 2. Location/GPS service
+     * 3. Internet connection
+     *
+     * If everything is available, start receiving GPS updates.
      */
     fun checkLocationAndInternet() {
 
+        // Check whether precise location permission is granted.
         val finePermission =
             ContextCompat.checkSelfPermission(
                 context,
                 Manifest.permission.ACCESS_FINE_LOCATION
             ) == PackageManager.PERMISSION_GRANTED
 
+        // Check whether approximate location permission is granted.
         val coarsePermission =
             ContextCompat.checkSelfPermission(
                 context,
@@ -88,7 +104,9 @@ fun MapScreen(
 
 
         /*
-         * Permission not granted
+         * Location permission has not been granted.
+         *
+         * The permission launcher will handle requesting it.
          */
         if (!finePermission && !coarsePermission) {
             return
@@ -96,7 +114,9 @@ fun MapScreen(
 
 
         /*
-         * Location service disabled
+         * Location service is disabled.
+         *
+         * Show a dialog asking the user to enable Location.
          */
         if (!viewModel.isLocationEnabled()) {
 
@@ -107,7 +127,10 @@ fun MapScreen(
 
 
         /*
-         * Internet unavailable
+         * Internet connection is unavailable.
+         *
+         * Show a dialog asking the user to enable
+         * Wi-Fi or mobile data.
          */
         if (!viewModel.isInternetAvailable()) {
 
@@ -118,9 +141,10 @@ fun MapScreen(
 
 
         /*
-         * Everything is available
+         * All required conditions are satisfied.
          *
-         * Start GPS updates
+         * Hide any previously displayed dialogs
+         * and start receiving GPS location updates.
          */
         showLocationDialog = false
         showInternetDialog = false
@@ -130,24 +154,31 @@ fun MapScreen(
 
 
     /*
-     * Location permission launcher
+     * Location permission launcher.
+     *
+     * This launcher requests both Fine and Coarse
+     * location permissions from the user.
      */
     val permissionLauncher =
         rememberLauncherForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
         ) { permissions ->
 
+            // Check whether Fine Location was granted.
             val fineLocation =
                 permissions[
                     Manifest.permission.ACCESS_FINE_LOCATION
                 ] == true
 
+            // Check whether Coarse Location was granted.
             val coarseLocation =
                 permissions[
                     Manifest.permission.ACCESS_COARSE_LOCATION
                 ] == true
 
 
+            // Continue checking device status if
+            // either location permission was granted.
             if (fineLocation || coarseLocation) {
 
                 checkLocationAndInternet()
@@ -156,16 +187,19 @@ fun MapScreen(
 
 
     /*
-     * Check permission when screen starts
+     * Check location permission when the screen
+     * is first created.
      */
     LaunchedEffect(Unit) {
 
+        // Check whether Fine Location permission is already granted.
         val finePermission =
             ContextCompat.checkSelfPermission(
                 context,
                 Manifest.permission.ACCESS_FINE_LOCATION
             ) == PackageManager.PERMISSION_GRANTED
 
+        // Check whether Coarse Location permission is already granted.
         val coarsePermission =
             ContextCompat.checkSelfPermission(
                 context,
@@ -173,6 +207,8 @@ fun MapScreen(
             ) == PackageManager.PERMISSION_GRANTED
 
 
+        // If neither permission has been granted,
+        // request both permissions.
         if (!finePermission && !coarsePermission) {
 
             permissionLauncher.launch(
@@ -184,30 +220,39 @@ fun MapScreen(
 
         } else {
 
+            // Permission already exists, so check
+            // Location and Internet status.
             checkLocationAndInternet()
         }
     }
 
 
     /*
-     * Re-check when user comes back
-     * from Location / Internet Settings
+     * Observe the screen lifecycle.
+     *
+     * When the user returns to the app after opening
+     * Location or Internet settings, check the device
+     * status again.
      */
-    androidx.compose.runtime.DisposableEffect(
+    DisposableEffect(
         lifecycleOwner
     ) {
 
         val observer =
             LifecycleEventObserver { _, event ->
 
+                // ON_RESUME is triggered when the screen
+                // becomes active again.
                 if (event == Lifecycle.Event.ON_RESUME) {
 
                     checkLocationAndInternet()
                 }
             }
 
+        // Start observing lifecycle events.
         lifecycleOwner.lifecycle.addObserver(observer)
 
+        // Remove the observer when this screen is destroyed.
         onDispose {
 
             lifecycleOwner.lifecycle.removeObserver(
@@ -218,12 +263,15 @@ fun MapScreen(
 
 
     /*
-     * Location dialog
+     * Location disabled dialog.
+     *
+     * Shown when the device's Location service is turned off.
      */
     if (showLocationDialog) {
 
         AlertDialog(
 
+            // Close the dialog when the user dismisses it.
             onDismissRequest = {
                 showLocationDialog = false
             },
@@ -238,6 +286,7 @@ fun MapScreen(
                 )
             },
 
+            // Button used to open Android Location settings.
             confirmButton = {
 
                 TextButton(
@@ -246,6 +295,7 @@ fun MapScreen(
 
                         showLocationDialog = false
 
+                        // Open the device's Location settings.
                         context.startActivity(
                             Intent(
                                 Settings.ACTION_LOCATION_SOURCE_SETTINGS
@@ -259,6 +309,7 @@ fun MapScreen(
                 }
             },
 
+            // Button used to close the dialog.
             dismissButton = {
 
                 TextButton(
@@ -277,12 +328,16 @@ fun MapScreen(
 
 
     /*
-     * Internet dialog
+     * Internet unavailable dialog.
+     *
+     * Shown when the device does not have
+     * a usable internet connection.
      */
     if (showInternetDialog) {
 
         AlertDialog(
 
+            // Close the dialog.
             onDismissRequest = {
                 showInternetDialog = false
             },
@@ -297,6 +352,7 @@ fun MapScreen(
                 )
             },
 
+            // Button used to open Android's Internet settings.
             confirmButton = {
 
                 TextButton(
@@ -306,6 +362,10 @@ fun MapScreen(
                         showInternetDialog = false
 
 
+                        /*
+                         * Android 10 (API 29) and above:
+                         * Open the Internet connectivity panel.
+                         */
                         if (
                             Build.VERSION.SDK_INT >=
                             Build.VERSION_CODES.Q
@@ -319,6 +379,10 @@ fun MapScreen(
 
                         } else {
 
+                            /*
+                             * Older Android versions:
+                             * Open the Wireless settings screen.
+                             */
                             context.startActivity(
                                 Intent(
                                     Settings.ACTION_WIRELESS_SETTINGS
@@ -333,6 +397,7 @@ fun MapScreen(
                 }
             },
 
+            // Button used to close the Internet dialog.
             dismissButton = {
 
                 TextButton(
@@ -351,21 +416,9 @@ fun MapScreen(
 
 
     /*
-     * =========================================================
-     * MAP / LOADING UI
-     * =========================================================
-     *
-     * No default location is used.
-     *
-     * Until GPS gives us a real location:
-     *
-     *        CircularProgressIndicator
-     *
-     * Once location is available:
-     *
-     *        GoogleMap
+     * Show a loading screen while the first
+     * location is being received.
      */
-
     if (userLocation == null) {
 
         Box(
@@ -378,6 +431,7 @@ fun MapScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
 
+                // Loading indicator while waiting for GPS.
                 CircularProgressIndicator()
 
                 Text("Getting your location...")
@@ -386,15 +440,23 @@ fun MapScreen(
 
     } else {
 
+        // State used to control the Google Maps camera.
         val cameraPositionState =
             rememberCameraPositionState()
 
+        // Tracks whether Google Maps has finished loading.
         var mapLoaded by remember {
             mutableStateOf(false)
         }
 
+
         /*
-         * Share current GPS location
+         * Function for sharing the current GPS location.
+         *
+         * NOTE:
+         * The actual Share Location button below contains
+         * the newer implementation that also converts the
+         * coordinates into a full address.
          */
         fun shareLocation() {
 
@@ -403,12 +465,16 @@ fun MapScreen(
                 val latitude = location.latitude
                 val longitude = location.longitude
 
+                // Create a Google Maps URL using latitude
+                // and longitude.
                 val locationUrl =
                     "https://www.google.com/maps/search/?api=1&query=$latitude,$longitude"
 
+                // Text that will be shared.
                 val shareText =
                     "My current location:\n$locationUrl"
 
+                // Create Android's standard share Intent.
                 val shareIntent =
                     Intent(Intent.ACTION_SEND).apply {
 
@@ -420,6 +486,7 @@ fun MapScreen(
                         )
                     }
 
+                // Open Android's share sheet.
                 context.startActivity(
                     Intent.createChooser(
                         shareIntent,
@@ -431,33 +498,45 @@ fun MapScreen(
 
 
         /*
-         * Map + Share Button
+         * Main map container.
+         *
+         * The Google Map fills the entire screen and
+         * the Share Location button is placed on top.
          */
         Box(
             modifier = Modifier.fillMaxSize()
         ) {
 
             /*
-             * Google Map
+             * Google Map.
              */
             GoogleMap(
 
                 modifier = Modifier.fillMaxSize(),
 
+                // Controls the position and zoom level of the camera.
                 cameraPositionState =
                     cameraPositionState,
 
+                // Configure Google Map properties.
                 properties =
                     MapProperties(
+                        // We use our own Marker instead of
+                        // Google's default My Location indicator.
                         isMyLocationEnabled = false
                     ),
 
+                // Configure Google Map UI controls.
                 uiSettings =
                     MapUiSettings(
+                        // Hide Google's default location button.
                         myLocationButtonEnabled = false,
+
+                        // Hide zoom controls.
                         zoomControlsEnabled = false
                     ),
 
+                // Called when Google Maps has completely loaded.
                 onMapLoaded = {
 
                     mapLoaded = true
@@ -465,10 +544,14 @@ fun MapScreen(
 
             ) {
 
+                /*
+                 * Add a marker at the user's current location.
+                 */
                 userLocation?.let { location ->
 
                     Marker(
 
+                        // Set marker position to current GPS location.
                         state =
                             MarkerState(
                                 position = location
@@ -481,7 +564,11 @@ fun MapScreen(
 
 
             /*
-             * Share Location Button
+             * Share Location Button.
+             *
+             * This button shares:
+             * - Full address
+             * - Google Maps location link
              */
             Button(
 
@@ -489,21 +576,31 @@ fun MapScreen(
 
                     userLocation?.let { location ->
 
+                        // Run the address lookup in a coroutine.
                         scope.launch {
 
                             /*
-                             * Get full address from GPS coordinates
+                             * Convert latitude and longitude
+                             * into a readable postal address.
+                             *
+                             * Geocoder performs the operation
+                             * on the IO dispatcher so it does not
+                             * block the main UI thread.
                              */
                             val address = withContext(Dispatchers.IO) {
 
                                 try {
 
+                                    // Create a Geocoder using the
+                                    // device's default locale.
                                     val geocoder =
                                         android.location.Geocoder(
                                             context,
                                             java.util.Locale.getDefault()
                                         )
 
+                                    // Convert GPS coordinates into
+                                    // an address.
                                     val addresses =
                                         geocoder.getFromLocation(
                                             location.latitude,
@@ -511,24 +608,28 @@ fun MapScreen(
                                             1
                                         )
 
+                                    // Use the first returned address.
                                     if (!addresses.isNullOrEmpty()) {
 
                                         addresses[0].getAddressLine(0)
 
                                     } else {
 
+                                        // No address was found.
                                         "Address unavailable"
                                     }
 
                                 } catch (e: Exception) {
 
+                                    // Handle Geocoder failures safely.
                                     "Address unavailable"
                                 }
                             }
 
 
                             /*
-                             * Google Maps link
+                             * Create a Google Maps link using
+                             * the current latitude and longitude.
                              */
                             val locationUrl =
                                 "https://www.google.com/maps/search/?api=1&query=" +
@@ -536,7 +637,8 @@ fun MapScreen(
 
 
                             /*
-                             * Message to share
+                             * Create the message that will be
+                             * shared with other apps.
                              */
                             val shareText =
                                 """
@@ -550,7 +652,8 @@ fun MapScreen(
 
 
                             /*
-                             * Android Share Intent
+                             * Create Android's standard text
+                             * sharing Intent.
                              */
                             val shareIntent =
                                 Intent(Intent.ACTION_SEND).apply {
@@ -565,7 +668,9 @@ fun MapScreen(
 
 
                             /*
-                             * Open Android share sheet
+                             * Open Android's share sheet so the
+                             * user can choose WhatsApp, Messages,
+                             * Gmail, etc.
                              */
                             context.startActivity(
                                 Intent.createChooser(
@@ -577,8 +682,10 @@ fun MapScreen(
                     }
                 },
 
+                // Disable the button until a location is available.
                 enabled = userLocation != null,
 
+                // Position the button at the bottom center of the map.
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 50.dp)
@@ -591,8 +698,8 @@ fun MapScreen(
 
 
         /*
-         * Move camera after Google Map
-         * has completely initialized.
+         * Move the Google Maps camera to the user's location
+         * after both the location and map are ready.
          */
         LaunchedEffect(
             userLocation,
@@ -603,6 +710,8 @@ fun MapScreen(
 
                 userLocation?.let { location ->
 
+                    // Animate the camera to the current location.
+                    // 17f provides a fairly close street-level zoom.
                     cameraPositionState.animate(
 
                         CameraUpdateFactory.newLatLngZoom(
@@ -614,10 +723,4 @@ fun MapScreen(
             }
         }
     }
-
-
 }
-
-
-
-
